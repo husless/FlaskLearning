@@ -1,7 +1,5 @@
 #Flask Learning#
-
 ----
-
 This is a microblog app, based on Flask. It is an experiment project, when I learning Flask web development.
 
 ##Reference:
