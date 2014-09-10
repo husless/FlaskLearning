@@ -8,21 +8,40 @@
         <td>
             <h1>User: {{user.nickname}}</h1>
             {% if user.about_me %}<p>{{user.about_me}}</p>{% endif %}
-            {% if user.last_seen %}<p><i>Last seen on: {{user.last_seen}}</i></p>{% endif %}
+            {% if user.last_seen %}<p><em>Last seen on: {{momentjs(user.last_seen).calendar()}}</em></p>{% endif %}
             <p>{{user.followers.count()}} followers | 
             {% if user.id == g.user.id %}
-                <a href="{{url_for('edit')}}">Edit your profile</a>
+            <a href="{{url_for('edit')}}">Edit your profile</a>
             {% elif not g.user.is_following(user) %}
-                <a href="{{url_for('follow', nickname = user.nickname)}}">Follow</a>
+            <a href="{{url_for('follow', nickname = user.nickname)}}">Follow</a>
             {% else %}
-                <a href="{{url_for('unfollow', nickname = user.nickname)}}">Unfollow</a>
+            <a href="{{url_for('unfollow', nickname = user.nickname)}}">Unfollow</a>
             {% endif %}
             </p>
         </td>
     </tr>
 </table>
 <hr>
-{% for post in posts %}
-    {% include 'post.html' %}
+<!-- posts is a Paginate object -->
+{% for post in posts.items %}
+{% include 'post.html' %}
 {% endfor %}
+
+<ul class="pager">
+    <li class="previous">
+    {% if posts.has_prev %}
+    <a href="{{ url_for('user', nickname = user.nickname, page = posts.prev_num) }}">&larr; Newer</a>
+    {%else%}
+    <a>&larr; Newer</a>
+    {%endif%}
+    </li>
+    <li class="next">
+    {% if posts.has_next %}
+    <a href="{{ url_for('user', nickname = user.nickname, page = posts.next_num) }}">Older &rarr;</a>
+    {%else%}
+    <a>Older &rarr;</a>
+    {%endif%}
+    </li>
+</ul>
+
 {% endblock %}
