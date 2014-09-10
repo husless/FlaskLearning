@@ -1,12 +1,17 @@
 from flask import render_template, url_for, g, redirect, flash, session, request
 from flask.ext.login import login_user, logout_user, current_user, login_required
-from app import app, db, lm, oid
-from config import POSTS_PER_PAGE, MAX_SEARCH_RESULTS, DATABASE_QUERY_TIMEOUT
+from flask.ext.babel import gettext
+from flask.ext.sqlalchemy import get_debug_queries
+from app import app, db, lm, oid, babel
+from guess_language import guessLanguage
+from flask import jsonify
 
+from config import POSTS_PER_PAGE, MAX_SEARCH_RESULTS, DATABASE_QUERY_TIMEOUT, LANGUAGES
 from forms import LoginForm, EditForm, PostForm, SearchForm
 from models import User, ROLE_USER, ROLE_ADMIN, Post
 from emails import follower_notification
 from datetime import datetime
+from translate import microsoft_translate
 
 @app.before_request
 def before_request():
@@ -17,6 +22,12 @@ def before_request():
         db.session.commit()
         g.search_form = SearchForm()
 
+@app.after_request
+def after_request(response):
+    for query in get_debug_queries():
+        if query.duration >= DATABASE_QUERY_TIMEOUT:
+            app.logger.warning("SLOW QUERY: %s\nParameters: %s\nDuration: %fs\nContext: %s\n" % (query.statement, query.parameters, query.duration, query.context))
+    return response
 
 @app.route('/', methods=['GET', 'POST'])
 @app.route('/index', methods=['GET', 'POST'])
@@ -25,10 +36,13 @@ def before_request():
 def index(page=1):
     form = PostForm()
     if form.validate_on_submit():
-        post = Post(body=form.post.data, timestamp=datetime.utcnow(), author=g.user)
+        language = guessLanguage(form.post.data)
+        if language =='UNKNOWN' or len(language)>5:
+            language = ''
+        post = Post(body=form.post.data, timestamp=datetime.utcnow(), author=g.user, language=language)
         db.session.add(post)
         db.session.commit()
-        flash('Your post is now live.')
+        flash(gettext('Your post is now live.'))
         return redirect(url_for('index'))
     posts = g.user.followed_posts().paginate(page, POSTS_PER_PAGE, False).items
     return render_template('index.html', title='Home', form=form, posts=posts)
@@ -51,16 +65,20 @@ def load_user(id):
 @oid.after_login
 def after_login(response):
     if response.email is None or response.email == '':
-        flash('Invalid login. Please try again.')
+        flash(gettext('Invalid login. Please try again.'))
         return redirect(url_for('login'))
     user = User.query.filter_by(email=response.email).first()
     if user is None: # email not in database, consider it as a new user
         nickname = response.nickname
         if nickname is None or nickname == '':
             nickname = response.email.split('@')[0]
+        nickname = User.make_valid_nickname(nickname)
         nickname = User.make_unique_nickname(nickname)
         user = User(nickname=nickname, email=response.email, role=ROLE_USER)
         db.session.add(user)
+        db.session.commit()
+        # following self
+        db.session.add(user.follow(user))
         db.session.commit()
     remember_me = False
     if 'remember_me' in session:
@@ -161,3 +179,28 @@ def search():
 def search_results(query):
     results = Post.query.whoosh_search(query, MAX_SEARCH_RESULTS).all()
     return render_template('search_results.html', query=query, results=results)
+
+@babel.localeselector
+def get_locale():
+    return request.accept_languages.best_match(LANGUAGES.keys())
+
+@app.route('/translate', methods=['POST'])
+@login_required
+def translate():
+    return jsonify({'text': microsoft_translate(request.form['text'], request.form['sourceLang'], request.form['destLang'])})
+
+@app.route('/delete/<int:id>')
+@login_required
+def delete(id):
+    post = Post.query.get(id)
+    if post is None:
+        flash(gettext('Post bot found.'))
+        return redirect(url_for('index'))
+    if post.author.id != g.user.id:
+        flash(gettext('You can delete only your own posts.'))
+        return redirect(url_for('index'))
+    db.session.delete(post)
+    db.session.commit()
+    flash(gettext('That post bas been deleted successfully.'))
+    return redirect(url_for('index'))
+
